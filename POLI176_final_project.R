@@ -1,0 +1,279 @@
+#' ---
+#' title: "POLI176 Final Project (SP22)"
+#' author: "Christian Bankard, Beibei Du, Hugo Lopez (ranked in alphabetical order)"
+#' Professor: ' Molly Roberts'
+#' output: pdf_document
+#' ---
+
+
+# Our research question: What effects did the Vietnam War have on American domestic issues?
+# We predict the most discussed themes in the state of the Union with respect to Vietnam topics: drugs, depression, civil rights, the death toll, civil unrest, and the war draft.
+# We are going to use both LDA and STM for the Topic Modelling.
+#Load package libraries that needed for our final project
+library(tidyverse)
+library(tokenizers) # tokenize the data
+library(quanteda) # Use this for LDA
+library(quanteda.textplots)
+library(stm) # Structure Topic Modelling
+library(seededlda)
+
+#Set working directory, need to change this line of code
+setwd("~/Desktop/POLI176:DSC161 Text as Data/Final Project")
+#Load data for speeches
+metadata <- read_csv("SOTU_WithText.csv")
+# Since our focus is on Vietnam War, we need to limit the year range
+# Find out the `year` range of Vietnam War
+typeof(metadata$year)
+class(metadata$year) # numeric
+# select the correct years and store it into the war df
+war <- metadata[which((metadata$year>=1955) & (metadata$year<=1975)),c(colnames(metadata))] # from 1 November 1955 to the fall of Saigon on 30 April 1975 according to Wikipedia
+
+# Preprocessing of the  data and make it corpus
+corpus_sotu <- corpus(war, text_field = "text") # make it into a text corpus
+corpus_sotu # take a look at it
+#Some common pre-processing, remove the punctuation and numbers
+toks <- tokens(corpus_sotu, remove_punct = TRUE, remove_numbers=TRUE) # remove punctuations and numbers
+toks <- tokens_wordstem(toks) # tokenize into the wordstem
+toks <- tokens_select(toks,  stopwords("en"), selection = "remove") # remove the stopwords in English
+dfm <- dfm(toks) # make it the document feature matrix
+dfm
+#Create a document feature matrix (dfm) and trim it with words appeared at least 5%
+toks <- corpus_sotu %>%
+  tokens()
+dfm <- dfm(toks)
+dfm_trimmed <- dfm_trim(dfm, min_docfreq = 0.05, docfreq_type = "prop") # trim it and remove the words appeared <5%
+dfm_trimmed # the cleaned up document matrix
+# the word cloud for documents from the 20 years of Vietnam War
+textplot_wordcloud(dfm_trimmed, col="black")
+
+############# LDA ############
+
+#Run LDA using quanteda
+lda <- textmodel_lda(dfm_trimmed, k = 10)
+#Most likely term for each topic
+lda.terms <- terms(lda, 10) # check the top words for each topic
+lda.terms
+#Topical content matrix
+mu <- lda$phi
+dim(mu) #10 topics, 5099 words
+mu[1:10,1:20]
+#Most representative words in Topic 1-10 using a for loop
+for (i in 1:10){
+  print(mu[i,][order(mu[i,], decreasing=T)][1:10])
+  print("######################################################")
+}
+#Topical prevalence matrix
+pi <- lda$theta
+dim(pi) #24 10
+#Most representative documents in Topic 1-10
+for (i in 1:10){
+  print(war[order(pi[i,],decreasing=T),])
+  print("######################################################")
+}
+
+############ STM ############
+# Get the `clusterFightinWords` function from Discussion3.R; We will only define this function once
+clusterFightinWords <- function(dfm, clust.vect, alpha.0=100) {
+  overall.terms <- colSums(dfm)
+  # n and n_k in Monroe et al. 
+  n <- sum(overall.terms)
+  # alpha_{kw} in Monroe et al. 
+  prior.terms <- overall.terms / n * alpha.0
+  # y_{kw}(i) in Monroe et al.
+  cluster.terms <- colSums(dfm[clust.vect, ])
+  # n_k(i) in Monroe et al.
+  cluster.n <- sum(cluster.terms)
+  cluster.term.odds <- 
+    (cluster.terms + prior.terms) / 
+    (cluster.n + alpha.0 - cluster.terms - prior.terms)
+  overall.term.odds <- 
+    (overall.terms + prior.terms) / 
+    (n + alpha.0 - overall.terms - prior.terms)
+  log.odds <- log(cluster.term.odds) - log(overall.term.odds)
+  variance <- 1/(cluster.terms + prior.terms) + 1/(overall.terms + prior.terms)
+  output <- log.odds / sqrt(variance)
+  names(output) <- colnames(dfm)
+  return(output)
+}
+# Find words that are distinctive between newsletters written by Democrats and Republicans
+terms <- clusterFightinWords(dfm_trimmed,war$sotu_type == "speech")
+sort(terms, decreasing=T)[1:10] #nation,people
+terms <- clusterFightinWords(dfm_trimmed,war$sotu_type == "written")
+sort(terms, decreasing=T)[1:10] #federal, administration, veterans, education
+
+# Structural Topic Model
+#STM
+#library(tm)
+temp<-textProcessor(documents=war$text,metadata=war)
+out <- prepDocuments(temp$documents, temp$vocab, temp$meta)
+# Run the model
+# Should we change the value of K
+model.stm <- stm(out$documents, out$vocab, K = 10, prevalence = ~ party,
+                 data = out$meta, max.em.its = 10) 
+model.stm <- stm(out$documents, out$vocab, K = 10, prevalence = ~ party,
+                 data = out$meta) 
+labelTopics(model.stm)
+
+# topics 1-10
+# difference between different parties
+model.stm.ee <- estimateEffect(1:10 ~ party, model.stm, meta = out$meta)
+# right associated with cov.value1
+plot(model.stm.ee, "party", method="difference", cov.value1="Republican", cov.value2="Democratic")
+
+
+# differences between two types
+model.stm.ee <- estimateEffect(1:10 ~ sotu_type, model.stm, meta = out$meta)
+plot(model.stm.ee, "sotu_type", method="difference", cov.value1="speech", cov.value2="written")
+
+
+# The above code is the 20 years data, next we need to find out the first ten years and last ten years results
+############################################## first ten year of Vietnam War ##############################################
+# The following code relates to the first eleven/half year of the Vietnam War
+
+war_first_ten <- metadata[which((metadata$year>=1955) & (metadata$year<=1965)),c(colnames(metadata))]
+# Preprocessing of the  data and make it corpus
+corpus_sotu_first_ten <- corpus(war_first_ten, text_field = "text")
+corpus_sotu_first_ten
+#Some common pre-processing, remove the punctuation and numbers
+toks_first_ten <- tokens(corpus_sotu_first_ten, remove_punct = TRUE, remove_numbers=TRUE)
+toks_first_ten <- tokens_wordstem(toks_first_ten)
+toks_first_ten <- tokens_select(toks_first_ten,  stopwords("en"), selection = "remove")
+dfm <- dfm(toks_first_ten)
+dfm
+#Create a document feature matrix (dfm) and trim it with words appeared at least 5%
+toks_first_ten <- corpus_sotu %>%
+  tokens()
+dfm_first_ten <- dfm(toks_first_ten)
+dfm_trimmed_first_ten <- dfm_trim(dfm_first_ten, min_docfreq = 0.05, docfreq_type = "prop")
+dfm_trimmed_first_ten
+# word cloud for the first ten years of the Vietnam War
+textplot_wordcloud(dfm_trimmed_first_ten, col="blue")
+
+# Find words that are distinctive between newsletters written by Democrats and Republicans
+terms_first_ten_s <- clusterFightinWords(dfm_trimmed_first_ten,war_first_ten$sotu_type == "speech")
+sort(terms_first_ten_s, decreasing=T)[1:10] #nation,people
+terms_first_ten_w <- clusterFightinWords(dfm_trimmed_first_ten,war_first_ten$sotu_type == "written")
+sort(terms_first_ten_w, decreasing=T)[1:10]#federal, administration, veterans, education
+
+############# LDA ############
+
+#Run LDA using quanteda
+lda <- textmodel_lda(dfm_trimmed_first_ten, k = 10)
+#Most likely term for each topic
+lda<- terms(lda, 10)
+lda.terms
+#Topical content matrix
+mu <- lda$phi
+dim(mu) #10 topics, 5099 words
+mu[1:10,1:20]
+#Most representative words in Topic 1-10
+for (i in 1:10){
+  print(mu[i,][order(mu[i,], decreasing=T)][1:10])
+  print("######################################################")
+}
+#Topical prevalence matrix
+pi <- lda$theta
+dim(pi) #24 10
+#Most representative documents in Topic 1-10
+for (i in 1:10){
+  print(war_first_ten[order(pi[i,],decreasing=T),])
+  print("######################################################")
+}
+
+
+############ STM ############
+
+# Structural Topic Model
+#STM
+#library(tm)
+temp_first_ten <-textProcessor(documents=war_first_ten$text,metadata=war_first_ten)
+out <- prepDocuments(temp_first_ten$documents, temp_first_ten$vocab, temp_first_ten$meta)
+# Run the model
+# Should we change the value of K
+model.stm <- stm(out$documents, out$vocab, K = 10, prevalence = ~ party,
+                 data = out$meta, max.em.its = 10) 
+model.stm <- stm(out$documents, out$vocab, K = 10, prevalence = ~ party,
+                 data = out$meta) 
+labelTopics(model.stm)
+
+# topics 1-10
+model.stm.ee <- estimateEffect(1:10 ~ party, model.stm, meta = out$meta)
+# right associated with cov.value1
+plot(model.stm.ee, "party", method="difference", cov.value1="Republican", cov.value2="Democratic")
+
+model.stm.ee <- estimateEffect(1:10 ~ sotu_type, model.stm, meta = out$meta)
+plot(model.stm.ee, "sotu_type", method="difference", cov.value1="speech", cov.value2="written")
+
+############################################## last ten year of Vietnam War ##############################################
+# The following code relates to the last ten year of the Vietnam War
+war_last_ten <- metadata[which((metadata$year>=1966) & (metadata$year<=1975)),c(colnames(metadata))]
+# Preprocessing of the  data and make it corpus
+corpus_sotu_last_ten <- corpus(war_last_ten, text_field = "text")
+corpus_sotu_last_ten
+#Some common pre-processing, remove the punctuation and numbers
+toks_last_ten <- tokens(corpus_sotu_last_ten, remove_punct = TRUE, remove_numbers=TRUE)
+toks_last_ten <- tokens_wordstem(toks_last_ten)
+toks_last_ten <- tokens_select(toks_last_ten,  stopwords("en"), selection = "remove")
+dfm <- dfm(toks_last_ten)
+dfm
+#Create a document feature matrix (dfm) and trim it with words appeared at least 5%
+toks_last_ten <- corpus_sotu %>%
+  tokens()
+dfm_last_ten <- dfm(toks_last_ten)
+dfm_trimmed_last_ten <- dfm_trim(dfm_last_ten, min_docfreq = 0.05, docfreq_type = "prop")
+dfm_trimmed_last_ten
+# word cloud for the first ten years of the Vietnam War
+textplot_wordcloud(dfm_trimmed_last_ten, col="purple")
+
+# Find words that are distinctive between newsletters written by Democrats and Republicans
+terms_last_ten_s <- clusterFightinWords(dfm_trimmed_last_ten,war_last_ten$sotu_type == "speech")
+sort(terms_last_ten_s, decreasing=T)[1:10] #nation,people
+terms_last_ten_s <- clusterFightinWords(dfm_trimmed_last_ten,war_first_ten$sotu_type == "written")
+sort(terms_last_ten_s, decreasing=T)[1:10]#federal, administration, veterans, education
+
+############# LDA ############
+
+#Run LDA using quanteda
+lda <- textmodel_lda(dfm_trimmed_last_ten, k = 10)
+#Most likely term for each topic
+lda <- terms(lda, 10)
+lda.terms
+#Topical content matrix
+mu_last_ten <- lda$phi
+dim(mu_last_ten) #10 topics, 5099 words
+mu_last_ten[1:10,1:20]
+#Most representative words in Topic 1-10
+for (i in 1:10){
+  print(mu_last_ten[i,][order(mu_last_ten[i,], decreasing=T)][1:10])
+  print("######################################################")
+}
+#Topical prevalence matrix
+pi <- lda_last_ten$theta
+dim(pi) #24 10
+#Most representative documents in Topic 1-10
+for (i in 1:10){
+  print(war_last_ten[order(pi[i,],decreasing=T),])
+  print("######################################################")
+}
+
+############ STM ############
+# Structural Topic Model
+#STM
+#library(tm)
+temp_last_ten <-textProcessor(documents=war_last_ten$text,metadata=war_last_ten)
+out <- prepDocuments(temp_last_ten$documents, temp_last_ten$vocab, temp_last_ten$meta)
+# Run the model
+# Should we change the value of K
+model.stm <- stm(out$documents, out$vocab, K = 10, prevalence = ~ party,
+                 data = out$meta, max.em.its = 10) 
+model.stm <- stm(out$documents, out$vocab, K = 10, prevalence = ~ party,
+                 data = out$meta) 
+labelTopics(model.stm)
+
+# topics 1-10
+model.stm.ee <- estimateEffect(1:10 ~ party, model.stm, meta = out$meta)
+# right associated with cov.value1
+plot(model.stm.ee, "party", method="difference", cov.value1="Republican", cov.value2="Democratic")
+
+model.stm.ee <- estimateEffect(1:10 ~ sotu_type, model.stm, meta = out$meta)
+plot(model.stm.ee, "sotu_type", method="difference", cov.value1="speech", cov.value2="written")
